@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import server as app
+from evidence import accounts, canonical_url, public_links, variants
 
 
 class LocalAPITest(unittest.TestCase):
@@ -93,11 +94,75 @@ class LocalAPITest(unittest.TestCase):
             self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
             if fmt == "csv":
                 self.assertIn("'=1+1", body.decode("utf-8-sig"))
-                self.assertIn("'\t=2", body.decode("utf-8-sig"))
+                self.assertIn("待核实", body.decode("utf-8-sig"))
         self.assertEqual(app.safe_url("javascript:alert(1)"), "")
         self.assertEqual(app.safe_url("https://user:pass@example.invalid"), "")
         self.assertEqual(app.safe_url("https://example.invalid/abc"), "https://example.invalid/abc")
         self.assertEqual(self.request("GET", "/")[1]["X-Frame-Options"], "DENY")
+
+    def test_variant_preview_and_bounded_query(self):
+        status, _, raw = self.request("POST", "/api/variants", {"username": "Example_User"})
+        self.assertEqual(status, 200)
+        names = json.loads(raw)["usernames"]
+        self.assertEqual(names[0], "Example_User")
+        self.assertIn("example_user", names)
+        self.assertIn("Example-User", names)
+        self.assertLessEqual(len(names), 6)
+        status, _, raw = self.request("POST", "/api/jobs", {"username": "Example_User", "variants": ["example-user", "example-user"], "sites": ["GitHub"]})
+        self.assertEqual(status, 202)
+        job = json.loads(raw)
+        self.assertEqual(job["usernames"], ["Example_User", "example-user"])
+        self.assertEqual(job["total"], 2)
+        for names in (["bad/name"], ["fixture"] * 6, "fixture", [1]):
+            self.assertEqual(self.request("POST", "/api/jobs", {"username": "fixture", "variants": names})[0], 400)
+
+    def test_dedup_review_export_and_reload(self):
+        ident = self.create()
+        job = app.JOBS[ident]
+        job["rows"] = [
+            {"site": "GitHub", "url": "https://www.github.com/Fixture/", "status": "Claimed", "username": "Fixture", "checked_at": "2026-01-01"},
+            {"site": "GitHub", "url": "https://github.com/fixture?utm_source=test#bio", "status": "Claimed", "username": "fixture", "checked_at": "2026-01-02"},
+            {"site": "Other", "url": "https://example.invalid/Fixture", "status": "Available"}]
+        self.assertEqual(app.summary(job)["checked"], 3)
+        self.assertEqual(app.summary(job)["found"], 1)
+        merged = accounts(job)
+        self.assertEqual(len(merged[0]["sources"]), 2)
+        key = merged[0]["key"]
+        self.assertEqual(merged[0]["review"], "pending")
+        status, _, _ = self.request("POST", f"/api/jobs/{ident}/review", {"key": key, "state": "confirmed"})
+        self.assertEqual(status, 200)
+        self.assertEqual(accounts(job)[0]["review"], "confirmed")
+        self.assertIn("已人工核实", app.export(job, "csv")[0].decode("utf-8-sig"))
+        self.assertIn("Fixture, fixture", app.export(job, "txt")[0].decode())
+        app.JOBS.clear()
+        app.load()
+        self.assertEqual(accounts(app.JOBS[ident])[0]["review"], "confirmed")
+        for key, state in (("../../secret", "confirmed"), (merged[0]["key"], "invented"), ({}, "pending")):
+            self.assertEqual(self.request("POST", f"/api/jobs/{ident}/review", {"key": key, "state": state})[0], 400)
+
+    def test_public_link_evidence_is_bounded_and_never_identity_proof(self):
+        definitions = {"GitHub": {"url": "https://github.com/{}"}}
+        html = '''<a rel="me" href="https://example.invalid/about">personal</a>
+          <a href="https://github.com/other-user">profile</a>
+          <a href="https://github.com/other-user#bio">duplicate</a>
+          <a href="https://github.com/login">navigation</a>
+          <a rel="me" href="javascript:alert(1)">bad</a>
+          <a rel="me" href="https://user:pass@example.invalid">credentials</a>
+          <a href="https://unrelated.invalid/about">ordinary unrelated link</a>
+          <nav><a href="https://github.com/nav-user">navigation profile</a></nav>
+          <script>fetch('https://example.invalid/')</script>'''
+        links = public_links("https://github.com/fixture-user", html, definitions, "fixture-user")
+        self.assertEqual(len(links), 2)
+        self.assertTrue(all(link["review"] == "pending" for link in links))
+        self.assertTrue(all(link["from_url"] == "https://github.com/fixture-user" for link in links))
+        self.assertIn("rel=me", links[0]["evidence"])
+        self.assertIn("他人账号", links[1]["evidence"])
+        more = ''.join(f'<a rel="me" href="https://example.invalid/{i}">x</a>' for i in range(1000))
+        self.assertEqual(len(public_links("https://github.com/fixture", more, definitions, "fixture")), 20)
+        self.assertNotEqual(canonical_url("https://example.invalid/Case"), canonical_url("https://example.invalid/case"))
+        declared = public_links("https://github.com/fixture", '<a itemprop="url" href="https://example.invalid">website</a>', definitions, "fixture")
+        self.assertEqual(len(declared), 1)
+        self.assertIn("itemprop=url", declared[0]["evidence"])
 
 
 if __name__ == "__main__":

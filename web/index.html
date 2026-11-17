@@ -11,6 +11,7 @@
 <section class="card query-card"><form id="query-form"><label for="username">用户名</label><div class="input-row"><input id="username" name="username" placeholder="例如 example123" maxlength="64" autocomplete="off" required aria-describedby="input-hint"><button id="submit" type="submit" class="primary">开始查询 <span>↗</span></button></div>
 <div class="scope-row"><label for="scope">查询范围</label><select id="scope"><option value="common">常用平台</option><option value="all">全部支持的平台</option><option value="github">仅 GitHub</option><option value="custom">自选平台</option></select><span id="scope-info" class="muted small"></span></div>
 <div id="custom-sites" hidden><label for="site-picker">自选平台（按住 ⌘ / Ctrl 可多选，最多 30 个）</label><select id="site-picker" multiple size="7"></select></div>
+<details class="variant-box"><summary>用户名变体与别名</summary><p class="hint">生成大小写和分隔符变体，也可填写你知道的其他账号 ID。查询前可编辑，最多额外 5 个。</p><button type="button" id="suggest" class="secondary">生成变体建议</button><label for="variants">额外用户名（每行一个）</label><textarea id="variants" rows="3" maxlength="324" placeholder="example_123&#10;example-123"></textarea><p class="hint">仅生成字符形式变化，不代表这些账号属于同一个人。</p></details>
 <p id="input-hint" class="hint">输入账号 ID，而非姓名或主页链接。同名账号不一定属于同一个人。</p></form></section>
 <div id="error" class="error" role="alert" hidden></div>
 <section id="results" hidden><div class="result-title"><div><span class="eyebrow">QUERY RESULTS</span><h2 id="result-heading"></h2></div><button id="cancel" class="danger" hidden>停止查询</button></div>
@@ -19,7 +20,9 @@
 <div class="toolbar"><div class="filters" aria-label="筛选结果"><button data-filter="found" class="selected" aria-pressed="true">已发现</button><button data-filter="all" aria-pressed="false">全部</button><button data-filter="errors" aria-pressed="false">未能确认</button></div><div class="exports"><span class="muted small">导出</span><a id="csv">CSV</a><a id="txt">TXT</a><a id="json">JSON</a></div></div>
 <input id="search" class="search" type="search" placeholder="筛选平台名称…" aria-label="筛选平台名称">
 <div class="table-wrap"><table><thead><tr><th>平台</th><th>检测状态</th><th>账号链接</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty"><span>⌕</span><p>查询结果将在这里显示。</p></div></div>
-<p class="hint">“未检测到”不代表账号一定不存在；反爬、网络和平台规则变化都可能影响结果。TXT 仅导出已发现账号，CSV / JSON 包含所有已完成检测。</p></section>
+<p id="dedup-note" class="hint"></p>
+<section class="associations"><h3>公开主页关联 <span id="link-count">0</span></h3><p class="hint">来源页面中出现的外链，不代表两个账号同属一人；不继续抓取外链。可能包含导航或他人账号，请逐条核实。</p><div id="links"></div><p id="links-empty" class="muted small">暂未提取到符合规则的公开主页链接。空列表不代表不存在关联；部分平台的资料需要登录或由 JavaScript 加载。</p></section>
+<p class="hint">“未检测到”不代表账号一定不存在。CSV / TXT 导出去重账号与主页关联；JSON 另含所有原始检测记录。归属核实状态由你手动标记。</p></section>
 <section id="welcome" class="welcome"><span class="welcome-icon">⌕</span><h2>从一个用户名开始</h2><p>支持查看进度、保留历史，并将结果导出。</p><div><span>01 输入用户名</span><span>02 选择平台范围</span><span>03 查看账号线索</span></div></section>
 <footer>Powered by Sherlock · 结果仅作公开账号线索，请人工核实。</footer></main>
 </body></html>

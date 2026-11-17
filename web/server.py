@@ -13,13 +13,13 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+from evidence import accounts, safe_url, variants, valid_name, REVIEW_STATES
 
 import sherlock_project
 
 STATIC = Path(__file__).parent
 DATA = Path(os.environ.get("CHECK_ACCOUNT_DATA", "/data"))
 PORT = 18765
-HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 TOKEN = secrets.token_urlsafe(32)
 LOCK = threading.RLock()
 JOBS = {}
@@ -27,7 +27,6 @@ ACTIVE = None
 PROCESS = None
 SLOTS = threading.BoundedSemaphore(24)
 ID = re.compile(r"[a-f0-9]{32}")
-USERNAME = re.compile(r"[\w][\w.\-]{0,63}", re.UNICODE)
 manifest = json.loads((Path(sherlock_project.__file__).parent / "resources/data.json").read_text())
 SITES = sorted(k for k, v in manifest.items() if isinstance(v, dict) and "url" in v and not v.get("isNSFW"))
 
@@ -42,7 +41,7 @@ def save(job):
 def load():
     DATA.mkdir(parents=True, exist_ok=True)
     for path in sorted(DATA.glob("*.json")):
-        if not ID.fullmatch(path.stem) or path.is_symlink() or path.stat().st_size > 2_000_000:
+        if not ID.fullmatch(path.stem) or path.is_symlink() or path.stat().st_size > 8_000_000:
             continue
         try:
             job = json.loads(path.read_text())
@@ -56,14 +55,6 @@ def load():
             continue
 
 
-def safe_url(value):
-    try:
-        parsed = urlsplit(value)
-        return value if parsed.scheme in ("https", "http") and parsed.hostname and not parsed.username else ""
-    except ValueError:
-        return ""
-
-
 def run_job(job):
     global ACTIVE, PROCESS
     proc = None
@@ -73,7 +64,7 @@ def run_job(job):
             if job["state"] != "running":
                 return
             proc = subprocess.Popen(
-                [sys.executable, str(STATIC / "worker.py"), job["username"], json.dumps(job["sites"])],
+                [sys.executable, str(STATIC / "worker.py"), json.dumps(job.get("usernames", [job["username"]])), json.dumps(job["sites"])],
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 text=True, env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "PYTHONUNBUFFERED": "1"})
             PROCESS = proc
@@ -99,11 +90,15 @@ def run_job(job):
                 kind = event.get("type")
                 if kind == "start":
                     job["total"] = event["total"]
-                elif kind == "row" and len(job["rows"]) < len(SITES):
+                elif kind == "row" and len(job["rows"]) < len(SITES) * len(job.get("usernames", [job["username"]])):
                     job["rows"].append({"site": str(event["site"])[:150],
                         "url": safe_url(str(event["url"])[:4096]),
                         "status": str(event["status"])[:30],
-                        "seconds": event.get("seconds"), "detail": str(event.get("detail", ""))[:200]})
+                        "seconds": event.get("seconds"), "detail": str(event.get("detail", ""))[:200],
+                        "username": event.get("username", job["username"]), "checked_at": event.get("checked_at", "")})
+                elif kind == "link" and len(job.setdefault("links", [])) < 120:
+                    if not any(link["id"] == event["id"] for link in job["links"]):
+                        job["links"].append({k: event[k] for k in ("id", "from_url", "to_url", "site", "username", "observed_at", "evidence", "review")})
                 elif kind == "done":
                     done = True
                 elif kind == "error":
@@ -135,8 +130,13 @@ def run_job(job):
 
 
 def summary(job):
-    return {k: v for k, v in job.items() if k != "rows"} | {
-        "checked": len(job["rows"]), "found": sum(r["status"] == "Claimed" for r in job["rows"])}
+    return {k: v for k, v in job.items() if k not in ("rows", "links", "reviews")} | {
+        "checked": len(job["rows"]), "found": len(accounts(job)), "link_count": len(job.get("links", []))}
+
+
+def detail(job):
+    links = [dict(link, review=job.get("reviews", {}).get("link:" + link["id"], "pending")) for link in job.get("links", [])]
+    return summary(job) | {"rows": job["rows"], "accounts": accounts(job), "links": links}
 
 
 def csv_cell(value):
@@ -148,16 +148,22 @@ def csv_cell(value):
 
 def export(job, fmt):
     if fmt == "json":
-        return json.dumps(job, ensure_ascii=False, indent=2).encode(), "application/json"
+        return json.dumps(detail(job), ensure_ascii=False, indent=2).encode(), "application/json"
     if fmt == "txt":
         lines = [f"用户名: {job['username']}", f"任务状态: {job['state']}", "同名账号需要人工核实归属。", ""]
-        lines += [f"{r['site']}\t{r['url']}" for r in job["rows"] if r["status"] == "Claimed"]
+        for account in accounts(job):
+            sources = ", ".join(dict.fromkeys(s["username"] for s in account["sources"]))
+            lines.append(f"{account['site']}\t{account['url']}\t{REVIEW_STATES[account['review']]}\t查询来源: {sources}\t{account['evidence']}")
+        lines.append("\n公开主页关联（链接出现不代表账号同属一人）：")
+        lines += [f"{link['from_url']} -> {link['to_url']}\t{REVIEW_STATES[link['review']]}\t{link['evidence']}" for link in detail(job)["links"]]
         return "\n".join(lines).encode("utf-8"), "text/plain; charset=utf-8"
     stream = io.StringIO(newline="")
     writer = csv.writer(stream)
-    writer.writerow(["用户名", "站点", "状态", "链接", "耗时（秒）", "说明"])
-    for row in job["rows"]:
-        writer.writerow([csv_cell(v) for v in (job["username"], row["site"], row["status"], row["url"], row.get("seconds"), row.get("detail"))])
+    writer.writerow(["记录类型", "站点", "查询用户名", "检测状态", "核实状态", "账号/目标链接", "来源链接", "证据说明", "检测时间"])
+    for account in accounts(job):
+        writer.writerow([csv_cell(v) for v in ("去重账号", account["site"], ", ".join(dict.fromkeys(s["username"] for s in account["sources"])), "已发现", REVIEW_STATES[account["review"]], account["url"], " | ".join(s["url"] for s in account["sources"]), account["evidence"], " | ".join(s["checked_at"] for s in account["sources"]))])
+    for link in detail(job)["links"]:
+        writer.writerow([csv_cell(v) for v in ("主页关联", link["site"], link["username"], "页面外链", REVIEW_STATES[link["review"]], link["to_url"], link["from_url"], link["evidence"], link["observed_at"])])
     return stream.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8"
 
 
@@ -223,14 +229,15 @@ class Handler(BaseHTTPRequestHandler):
                 if match[2]:
                     body, mime = export(job, match[2])
                     return self.reply(200, body, mime, f"check-account-{job['id']}.{match[2]}")
-                return self.reply(200, summary(job) | {"rows": job["rows"]})
+                return self.reply(200, detail(job))
         self.reply(404, {"error": "未找到记录。"})
 
     def do_POST(self):
         global ACTIVE
         if not self.trusted():
             return
-        if not secrets.compare_digest(self.headers.get("X-Local-Token", ""), TOKEN):
+        supplied_token = self.headers.get("X-Local-Token", "")
+        if not supplied_token.isascii() or not secrets.compare_digest(supplied_token, TOKEN):
             return self.reply(403, {"error": "页面已过期，请刷新后重试。"})
         if self.headers.get("Content-Type") != "application/json" or self.headers.get("Transfer-Encoding"):
             return self.reply(415, {"error": "请求必须使用 JSON。"})
@@ -244,24 +251,43 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, OSError):
             return self.reply(400, {"error": "请求格式无效或内容过长。"})
         with LOCK:
+            if self.path == "/api/variants":
+                if not valid_name(payload.get("username")):
+                    return self.reply(400, {"error": "请先输入有效用户名。"})
+                return self.reply(200, {"usernames": variants(payload["username"])})
             if self.path == "/api/jobs":
                 username = payload.get("username")
                 sites = payload.get("sites", [])
-                if not isinstance(username, str) or not USERNAME.fullmatch(username) or username in (".", ".."):
+                if not valid_name(username):
                     return self.reply(400, {"error": "用户名须为 1–64 个字母、数字、下划线、点或短横线，并以字母、数字或下划线开头。"})
                 if not isinstance(sites, list) or len(sites) > 30 or any(not isinstance(s, str) or s not in SITES for s in sites):
                     return self.reply(400, {"error": "查询范围无效。"})
+                aliases = payload.get("variants", [])
+                if not isinstance(aliases, list) or len(aliases) > 5 or any(not valid_name(name) for name in aliases):
+                    return self.reply(400, {"error": "额外用户名最多 5 个，且须符合相同的用户名格式。"})
+                usernames = list(dict.fromkeys([username, *aliases]))
                 if ACTIVE:
                     return self.reply(409, {"error": "已有查询正在进行，请等待完成或先停止。", "id": ACTIVE})
                 if len(JOBS) >= 500:
                     return self.reply(409, {"error": "历史记录已达到 500 条，请先备份并清理本地 web-data 目录后重启。"})
                 job = {"id": uuid.uuid4().hex, "username": username, "sites": sorted(set(sites)),
-                       "created": time.time(), "state": "running", "total": len(sites) or len(SITES), "rows": [], "message": ""}
+                       "created": time.time(), "state": "running", "total": (len(sites) or len(SITES)) * len(usernames),
+                       "usernames": usernames, "rows": [], "links": [], "reviews": {}, "message": ""}
                 save(job)
                 JOBS[job["id"]] = job
                 ACTIVE = job["id"]
                 threading.Thread(target=run_job, args=(job,), daemon=True).start()
                 return self.reply(202, summary(job))
+            review_match = re.fullmatch(r"/api/jobs/([a-f0-9]{32})/review", self.path)
+            if review_match and review_match[1] in JOBS:
+                job = JOBS[review_match[1]]
+                key, state = payload.get("key"), payload.get("state")
+                keys = {account["key"] for account in accounts(job)} | {"link:" + link["id"] for link in job.get("links", [])}
+                if not isinstance(key, str) or key not in keys or not isinstance(state, str) or state not in REVIEW_STATES:
+                    return self.reply(400, {"error": "核实对象或状态无效。"})
+                job.setdefault("reviews", {})[key] = state
+                save(job)
+                return self.reply(200, detail(job))
             match = re.fullmatch(r"/api/jobs/([a-f0-9]{32})/cancel", self.path)
             if match and match[1] in JOBS:
                 job = JOBS[match[1]]
