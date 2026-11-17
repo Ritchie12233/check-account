@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Check Account · 本地账号查询</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<aside><a class="brand" href="/" aria-label="Check Account 首页"><span class="logo">C</span><span>Check Account<small>本地账号查询</small></span></a>
+<div class="aside-head"><h2>查询历史</h2><button id="refresh" class="icon" aria-label="刷新历史">↻</button></div>
+<p id="history-empty" class="muted small">完成的查询会保存在这里。</p><nav id="history" aria-label="查询历史"></nav>
+<div class="local-note"><span class="dot"></span> 仅在本机运行<small>查询需要联网，记录保存在本地。</small></div></aside>
+<main><header><span class="eyebrow">SHERLOCK / WORKSPACE</span><span class="pill">LOCAL</span></header>
+<section class="intro"><h1>找一找，这个用户名在哪。</h1><p>一次查询多个公开平台，整理同名账号线索。</p></section>
+<section class="card query-card"><form id="query-form"><label for="username">用户名</label><div class="input-row"><input id="username" name="username" placeholder="例如 example123" maxlength="64" autocomplete="off" required aria-describedby="input-hint"><button id="submit" type="submit" class="primary">开始查询 <span>↗</span></button></div>
+<div class="scope-row"><label for="scope">查询范围</label><select id="scope"><option value="common">常用平台</option><option value="all">全部支持的平台</option><option value="github">仅 GitHub</option><option value="custom">自选平台</option></select><span id="scope-info" class="muted small"></span></div>
+<div id="custom-sites" hidden><label for="site-picker">自选平台（按住 ⌘ / Ctrl 可多选，最多 30 个）</label><select id="site-picker" multiple size="7"></select></div>
+<p id="input-hint" class="hint">输入账号 ID，而非姓名或主页链接。同名账号不一定属于同一个人。</p></form></section>
+<div id="error" class="error" role="alert" hidden></div>
+<section id="results" hidden><div class="result-title"><div><span class="eyebrow">QUERY RESULTS</span><h2 id="result-heading"></h2></div><button id="cancel" class="danger" hidden>停止查询</button></div>
+<div class="stats"><div><span>检测进度</span><strong id="progress-text">0 / 0</strong></div><div><span>发现同名账号</span><strong id="found-text" class="accent">0</strong></div><div><span>任务状态</span><strong id="state-text">等待中</strong></div></div>
+<progress id="progress" value="0" max="1" aria-label="查询进度"></progress><p id="job-message" class="muted small" role="status" aria-live="polite"></p>
+<div class="toolbar"><div class="filters" aria-label="筛选结果"><button data-filter="found" class="selected" aria-pressed="true">已发现</button><button data-filter="all" aria-pressed="false">全部</button><button data-filter="errors" aria-pressed="false">未能确认</button></div><div class="exports"><span class="muted small">导出</span><a id="csv">CSV</a><a id="txt">TXT</a><a id="json">JSON</a></div></div>
+<input id="search" class="search" type="search" placeholder="筛选平台名称…" aria-label="筛选平台名称">
+<div class="table-wrap"><table><thead><tr><th>平台</th><th>检测状态</th><th>账号链接</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty"><span>⌕</span><p>查询结果将在这里显示。</p></div></div>
+<p class="hint">“未检测到”不代表账号一定不存在；反爬、网络和平台规则变化都可能影响结果。TXT 仅导出已发现账号，CSV / JSON 包含所有已完成检测。</p></section>
+<section id="welcome" class="welcome"><span class="welcome-icon">⌕</span><h2>从一个用户名开始</h2><p>支持查看进度、保留历史，并将结果导出。</p><div><span>01 输入用户名</span><span>02 选择平台范围</span><span>03 查看账号线索</span></div></section>
+<footer>Powered by Sherlock · 结果仅作公开账号线索，请人工核实。</footer></main>
+</body></html>

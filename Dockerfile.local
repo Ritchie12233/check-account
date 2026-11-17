@@ -1,0 +1,12 @@
+FROM python:3.12-slim-bookworm
+ENV PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 SHERLOCK_ENV=docker
+WORKDIR /app
+COPY pyproject.toml ./
+COPY docs/pyproject/README.md ./docs/pyproject/README.md
+COPY sherlock_project ./sherlock_project
+COPY LICENSE ./
+RUN pip install --no-cache-dir . && useradd --uid 10001 --create-home sherlock
+COPY web /app/web
+USER sherlock
+WORKDIR /results
+ENTRYPOINT ["sherlock"]

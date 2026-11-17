@@ -6,3 +6,8 @@ tests/
 !/requirements.txt
 venv/
 devel/
+results/
+web-data/
+web-preview.jpg
+.env
+.env.*
